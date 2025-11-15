@@ -1,0 +1,13 @@
+services:
+  backend:
+    build:
+      context: ./
+    ports:
+      - "${HTTP_PORT}:${HTTP_PORT}"
+#    depends_on:
+#      db:
+#        condition: service_healthy
+    environment:
+      HTTP_PORT: ${HTTP_PORT}
+      PG_MAX_CONNECTIONS: ${PG_MAX_CONNECTIONS}
+      PG_URL: ${PG_URL}

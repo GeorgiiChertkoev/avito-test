@@ -12,8 +12,12 @@ type Config struct {
 }
 
 type Postgres struct {
-	URL            string `env:"PG_URL,required"`
-	MaxConnections int    `env:"PG_MAX_CONNECTIONS,required"`
+	User           string `env:"POSTGRES_USER,required"`
+	Password       string `env:"POSTGRES_PASSWORD,required"`
+	DatabaseName   string `env:"POSTGRES_DBNAME" envDefault:"prreviewer"`
+	Host           string `env:"POSTGRES_HOST" envDefault:"postgres"`
+	Port           int    `env:"POSTGRES_PORT" envDefault:"5432"`
+	MaxConnections int    `env:"PG_MAX_CONNECTIONS" envDefault:"2"`
 }
 
 func NewConfig() (*Config, error) {

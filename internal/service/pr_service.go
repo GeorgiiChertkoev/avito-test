@@ -2,22 +2,19 @@ package service
 
 import (
 	"context"
-	"pr-reviewer/internal/domain/pr"
+	"pr-reviewer/internal/domain/pullrequest"
 	"pr-reviewer/internal/domain/repo"
 	"pr-reviewer/internal/domain/team"
-	"pr-reviewer/internal/domain/user"
+	"slices"
 	"time"
 )
 
 type PRService struct {
-	prRepo   pr.Repository
-	userRepo user.Repository
-	teamRepo team.Repository
-	uow      repo.UnitOfWork
+	uow repo.UnitOfWork
 }
 
-func NewPRService(prRepo pr.Repository, userRepo user.Repository, teamRepo team.Repository, uow repo.UnitOfWork) *PRService {
-	return &PRService{prRepo: prRepo, userRepo: userRepo, teamRepo: teamRepo, uow: uow}
+func NewPRService(uow repo.UnitOfWork) *PRService {
+	return &PRService{uow: uow}
 }
 
 type CreatePRInput struct {
@@ -26,45 +23,22 @@ type CreatePRInput struct {
 	AuthorID string
 }
 
-func (s *PRService) CreatePR(ctx context.Context, in CreatePRInput) (*pr.PullRequest, error) {
-	var created *pr.PullRequest
+func (s *PRService) CreatePR(ctx context.Context, in CreatePRInput) (*pullrequest.PullRequest, error) {
+	var created *pullrequest.PullRequest
 
 	err := s.uow.Do(ctx, func(tx repo.Repositories) error {
-		exists, err := tx.PRRepo.PRExists(ctx, in.ID)
+		t, err := getTeamByUserId(ctx, tx, in.AuthorID)
 		if err != nil {
 			return err
 		}
-		if exists {
-			return pr.ErrPRExists
-		}
 
-		author, err := tx.UserRepo.GetUserByID(ctx, in.AuthorID)
-		if err != nil {
-			return pr.ErrPRNotFound
-		}
+		assigned := pickReviewers(t, 2, []string{in.AuthorID})
 
-		t, err := tx.TeamRepo.GetTeamByName(ctx, author.TeamName)
-		if err != nil {
-			return team.ErrTeamNotFound
-		}
-
-		candidates := make([]string, 0)
-		for _, m := range t.Members {
-			if m.IsActive && m.UserID != in.AuthorID {
-				candidates = append(candidates, m.UserID)
-			}
-		}
-
-		assigned := []string{}
-		for i := 0; i < len(candidates) && len(assigned) < 2; i++ {
-			assigned = append(assigned, candidates[i])
-		}
-
-		p := &pr.PullRequest{
+		p := &pullrequest.PullRequest{
 			ID:                in.ID,
 			Name:              in.Name,
 			AuthorID:          in.AuthorID,
-			Status:            pr.StatusOpen,
+			Status:            pullrequest.StatusOpen,
 			AssignedReviewers: assigned,
 			CreatedAt:         timePtr(time.Now()),
 		}
@@ -80,80 +54,113 @@ func (s *PRService) CreatePR(ctx context.Context, in CreatePRInput) (*pr.PullReq
 	return created, err
 }
 
-func (s *PRService) MergePR(ctx context.Context, id string) (*pr.PullRequest, error) {
-	p, err := s.prRepo.GetPR(ctx, id)
+func (s *PRService) MergePR(ctx context.Context, id string) (*pullrequest.PullRequest, error) {
+	var pr *pullrequest.PullRequest
+	err := s.uow.Do(context.Background(), func(tx repo.Repositories) error {
+		var err error
+		pr, err = tx.PRRepo.GetPR(ctx, id)
+		if err != nil {
+			return err
+		}
+
+		if pr.Status == pullrequest.StatusMerged {
+			return nil
+		}
+
+		pr.Status = pullrequest.StatusMerged
+		pr.MergedAt = timePtr(time.Now())
+
+		err = tx.PRRepo.UpdatePR(ctx, pr)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		return nil, pr.ErrPRNotFound
-	}
-
-	if p.Status == pr.StatusMerged {
-		return p, nil
-	}
-
-	p.Status = pr.StatusMerged
-	p.MergedAt = timePtr(time.Now())
-
-	if err := s.prRepo.UpdatePR(ctx, p); err != nil {
 		return nil, err
 	}
 
-	return p, nil
+	return pr, nil
 }
 
-func (s *PRService) ReassignReviewer(ctx context.Context, prID, old string) (*pr.PullRequest, string, error) {
-	//var replacedBy string
-
-	p, err := s.prRepo.GetPR(ctx, prID)
-	if err != nil {
-		return nil, "", pr.ErrPRNotFound
-	}
-
-	if p.Status == pr.StatusMerged {
-		return nil, "", pr.ErrPRMerged
-	}
-
-	assigned := p.AssignedReviewers
-	idx := -1
-	for i, r := range assigned {
-		if r == old {
-			idx = i
-			break
+func (s *PRService) ReassignReviewer(ctx context.Context, prID, oldReviewer string) (*pullrequest.PullRequest, string, error) {
+	var pr *pullrequest.PullRequest
+	var replacedBy string
+	err := s.uow.Do(context.Background(), func(tx repo.Repositories) error {
+		var err error
+		pr, err = tx.PRRepo.GetPR(ctx, prID)
+		if err != nil {
+			return err
 		}
-	}
-	if idx == -1 {
-		return nil, "", pr.ErrNotAssigned
-	}
+		if pr.Status == pullrequest.StatusMerged {
+			return pullrequest.ErrPRMerged
+		}
 
-	author, err := s.userRepo.GetUserByID(ctx, p.AuthorID)
+		if !slices.Contains(pr.AssignedReviewers, oldReviewer) {
+			return pullrequest.ErrNotAssigned
+		}
+
+		t, err := getTeamByUserId(ctx, tx, oldReviewer)
+		if err != nil {
+			return err
+		}
+
+		reassigned := pickReviewers(t, 1, pr.AssignedReviewers)
+		if len(reassigned) == 0 {
+			return pullrequest.ErrNoCandidate
+		}
+		replacedBy = reassigned[0]
+
+		pr.AssignedReviewers = slices.DeleteFunc(pr.AssignedReviewers, func(id string) bool {
+			return id == oldReviewer
+		})
+		pr.AssignedReviewers = append(pr.AssignedReviewers, reassigned...)
+
+		err = tx.PRRepo.UpdatePR(ctx, pr)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
 	if err != nil {
-		return nil, "", pr.ErrPRNotFound
+		return nil, "", err
 	}
 
-	t, err := s.teamRepo.GetTeamByName(ctx, author.TeamName)
+	return pr, replacedBy, nil
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+func getTeamByUserId(ctx context.Context, tx repo.Repositories, userId string) (*team.Team, error) {
+	author, err := tx.UserRepo.GetUserByID(ctx, userId)
 	if err != nil {
-		return nil, "", team.ErrTeamNotFound
+		return nil, pullrequest.ErrNotFound
 	}
 
-	candidates := []string{}
+	t, err := tx.TeamRepo.GetTeamByName(ctx, author.TeamName)
+	if err != nil {
+		return nil, pullrequest.ErrNotFound
+	}
+
+	return t, nil
+}
+
+func pickReviewers(t *team.Team, reviewerCount int, excluded []string) []string {
+	candidates := make([]string, 0)
 	for _, m := range t.Members {
-		if m.IsActive && m.UserID != old && m.UserID != author.UserID {
+		if m.IsActive && !slices.Contains(excluded, m.UserID) {
 			candidates = append(candidates, m.UserID)
 		}
 	}
 
-	if len(candidates) == 0 {
-		return nil, "", pr.ErrNoCandidate
+	assigned := make([]string, 0)
+	for i := 0; i < len(candidates) && len(assigned) < reviewerCount; i++ {
+		assigned = append(assigned, candidates[i])
 	}
 
-	replacement := candidates[0]
-	assigned[idx] = replacement
-	p.AssignedReviewers = assigned
-
-	if err := s.prRepo.UpdatePR(ctx, p); err != nil {
-		return nil, "", err
-	}
-
-	return p, replacement, nil
+	return assigned
 }
-
-func timePtr(t time.Time) *time.Time { return &t }

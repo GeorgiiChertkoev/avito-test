@@ -1,4 +1,4 @@
-package pr
+package pullrequest
 
 import "context"
 
@@ -7,5 +7,5 @@ type Repository interface {
 	GetPR(ctx context.Context, id string) (*PullRequest, error)
 	UpdatePR(ctx context.Context, pr *PullRequest) error
 
-	PRExists(ctx context.Context, id string) (bool, error)
+	GetReviewerPRs(ctx context.Context, userID string) ([]PullRequestShort, error)
 }

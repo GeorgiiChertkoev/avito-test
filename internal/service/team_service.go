@@ -8,23 +8,18 @@ import (
 )
 
 type TeamService struct {
-	teamRepo team.Repository
-	userRepo user.Repository
-	uow      repo.UnitOfWork
+	uow repo.UnitOfWork
 }
 
-func NewTeamService(teamRepo team.Repository, userRepo user.Repository, ouw repo.UnitOfWork) *TeamService {
-	return &TeamService{teamRepo: teamRepo, userRepo: userRepo, uow: ouw}
+func NewTeamService(ouw repo.UnitOfWork) *TeamService {
+	return &TeamService{uow: ouw}
 }
 
-func (s *TeamService) AddTeam(ctx context.Context, t *team.Team) (*team.Team, error) {
+func (s *TeamService) CreateTeam(ctx context.Context, t *team.Team) (*team.Team, error) {
 	var created *team.Team
 
 	err := s.uow.Do(ctx, func(tx repo.Repositories) error {
-		existing, err := tx.TeamRepo.GetTeamByName(ctx, t.TeamName)
-		if err != nil {
-			return err
-		}
+		existing, _ := tx.TeamRepo.GetTeamByName(ctx, t.TeamName)
 		if existing != nil {
 			return team.ErrTeamExists
 		}
@@ -45,8 +40,8 @@ func (s *TeamService) AddTeam(ctx context.Context, t *team.Team) (*team.Team, er
 				return err
 			}
 		}
-
 		created = t
+
 		return nil
 	})
 
@@ -54,9 +49,16 @@ func (s *TeamService) AddTeam(ctx context.Context, t *team.Team) (*team.Team, er
 }
 
 func (s *TeamService) GetTeam(ctx context.Context, name string) (*team.Team, error) {
-	t, err := s.teamRepo.GetTeamByName(ctx, name)
+	var t *team.Team
+	err := s.uow.Do(ctx, func(tx repo.Repositories) error {
+		var err error
+		t, err = tx.TeamRepo.GetTeamByName(ctx, name)
+
+		return err
+	})
 	if err != nil {
-		return nil, team.ErrTeamNotFound
+		return nil, err
 	}
+
 	return t, nil
 }

@@ -2,46 +2,58 @@ package service
 
 import (
 	"context"
-	"pr-reviewer/internal/domain/pr"
+	"pr-reviewer/internal/domain/pullrequest"
+	"pr-reviewer/internal/domain/repo"
 	"pr-reviewer/internal/domain/user"
 )
 
 type UserService struct {
-	userRepo user.Repository
-	prRepo   pr.Repository
+	uow repo.UnitOfWork
 }
 
-func NewUserService(userRepo user.Repository, prRepo pr.Repository) *UserService {
-	return &UserService{userRepo: userRepo, prRepo: prRepo}
+func NewUserService(uow repo.UnitOfWork) *UserService {
+	return &UserService{uow: uow}
 }
 
 func (s *UserService) SetIsActive(ctx context.Context, userID string, active bool) (*user.User, error) {
-	u, err := s.userRepo.GetUserByID(ctx, userID)
-	if err != nil {
-		return nil, user.ErrUserNotFound
-	}
+	var usr *user.User
 
-	u.IsActive = active
-	updated, err := s.userRepo.SetIsActive(ctx, userID, active)
+	err := s.uow.Do(ctx, func(tx repo.Repositories) error {
+		var err error
+		usr, err = tx.UserRepo.GetUserByID(ctx, userID)
+		if err != nil {
+			return err
+		}
+
+		usr.IsActive = active
+		err = tx.UserRepo.UpsertUser(ctx, usr)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	return updated, nil
+	return usr, nil
 }
 
 type UserReviews struct {
-	UserID       string                `json:"user_id"`
-	PullRequests []pr.PullRequestShort `json:"pull_requests"`
+	UserID       string                         `json:"user_id"`
+	PullRequests []pullrequest.PullRequestShort `json:"pull_requests"`
 }
 
 func (s *UserService) GetReviewPRs(ctx context.Context, userID string) (*UserReviews, error) {
-	_, err := s.userRepo.GetUserByID(ctx, userID)
-	if err != nil {
-		return nil, user.ErrUserNotFound
-	}
+	var prs []pullrequest.PullRequestShort
 
-	prs, err := s.userRepo.GetReviewerPRs(ctx, userID)
+	err := s.uow.Do(ctx, func(tx repo.Repositories) error {
+		var err error
+		prs, err = tx.PRRepo.GetReviewerPRs(ctx, userID)
+
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}

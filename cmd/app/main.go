@@ -12,6 +12,5 @@ func main() {
 		log.Fatalf("Config error: %s", err)
 	}
 
-	log.Printf("Config: %+v", cfg)
 	app.Run(*cfg)
 }

@@ -1,6 +1,6 @@
 package user
 
-import "pr-reviewer/internal/domain/pr"
+import "pr-reviewer/internal/domain/pullrequest"
 
 type User struct {
 	UserID   string `json:"user_id"`
@@ -10,6 +10,6 @@ type User struct {
 }
 
 type ReviewList struct {
-	UserID       string                `json:"user_id"`
-	PullRequests []pr.PullRequestShort `json:"pull_requests"`
+	UserID       string                         `json:"user_id"`
+	PullRequests []pullrequest.PullRequestShort `json:"pull_requests"`
 }

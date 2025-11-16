@@ -1,4 +1,4 @@
-package pr
+package pullrequest
 
 import "time"
 

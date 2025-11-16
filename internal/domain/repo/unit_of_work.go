@@ -2,7 +2,7 @@ package repo
 
 import (
 	"context"
-	"pr-reviewer/internal/domain/pr"
+	"pr-reviewer/internal/domain/pullrequest"
 	"pr-reviewer/internal/domain/team"
 	"pr-reviewer/internal/domain/user"
 )
@@ -10,7 +10,7 @@ import (
 type Repositories struct {
 	TeamRepo team.Repository
 	UserRepo user.Repository
-	PRRepo   pr.Repository
+	PRRepo   pullrequest.Repository
 }
 
 type UnitOfWork interface {

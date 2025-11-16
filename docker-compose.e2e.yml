@@ -1,0 +1,13 @@
+services:
+  testing:
+    build: ./e2e_tests
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      HOST_ADDRESS: "http://backend:${HTTP_PORT}"
+    entrypoint: ["pytest", "-v", "/app/test.py"]
+    profiles: ["runner"]
+
+
+
